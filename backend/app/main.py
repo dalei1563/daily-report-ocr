@@ -49,6 +49,8 @@ def migrate_sqlite():
         columns = [row[1] for row in conn.execute(text("PRAGMA table_info(users)")).fetchall()]
         if "bound_template_id" not in columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN bound_template_id INTEGER"))
+        if "deleted" not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN deleted BOOLEAN DEFAULT 0"))
         record_columns = [row[1] for row in conn.execute(text("PRAGMA table_info(ocr_records)")).fetchall()]
         if "progress_step" not in record_columns:
             conn.execute(text("ALTER TABLE ocr_records ADD COLUMN progress_step VARCHAR(30) DEFAULT 'uploaded'"))

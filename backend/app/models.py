@@ -20,6 +20,7 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     bound_template_id: Mapped[Optional[int]] = mapped_column(ForeignKey("templates.id"), nullable=True)
     bound_template: Mapped[Optional["Template"]] = relationship()
 

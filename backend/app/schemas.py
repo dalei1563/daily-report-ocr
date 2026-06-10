@@ -38,6 +38,14 @@ class UserUpdate(BaseModel):
     bound_template_id: Optional[int] = None
 
 
+class UserStatusUpdate(BaseModel):
+    is_active: bool
+
+
+class UserPasswordReset(BaseModel):
+    password: str = Field(min_length=6)
+
+
 class TemplateFieldIn(BaseModel):
     code: str
     name: str
