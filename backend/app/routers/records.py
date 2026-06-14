@@ -16,7 +16,7 @@ from ..services.audit import log_action
 from ..services.app_settings import missing_model_settings, runtime_model_settings
 from ..services.exporter import export_records
 from ..services.llm import structure_markdown
-from ..services.ocr import run_paddle_ocr
+from ..services.ocr import PaddleOCRQueueFull, run_paddle_ocr
 from ..services.templates import template_to_dict
 from ..utils import ensure_dirs, json_dumps, safe_json_loads, unique_name
 
@@ -35,6 +35,30 @@ def remove_empty_rows(data: dict) -> dict:
 
 def can_access(record: OcrRecord, user: User) -> bool:
     return user.role == "admin" or record.created_by == user.id
+
+
+def blank_structured_result(template: Template, warning: str) -> dict:
+    header = {}
+    row = {}
+    for field in sorted(template.fields, key=lambda item: item.sort_order):
+        if field.area == "header":
+            header[field.code] = ""
+        elif field.area == "table":
+            row[field.code] = ""
+    return {"header": header, "rows": [row] if row else [], "warnings": [warning]}
+
+
+def save_result(record: OcrRecord, structured: dict, markdown: str, raw_ocr: str, model_raw: str, raw_path: str, db: Session) -> None:
+    if record.result:
+        result = record.result
+    else:
+        result = OcrResult(record_id=record.id)
+        db.add(result)
+    result.raw_markdown = markdown
+    result.raw_ocr_json = raw_ocr
+    result.model_raw_json = model_raw
+    result.structured_json = json_dumps(structured)
+    result.raw_path = raw_path
 
 
 def to_list(record: OcrRecord) -> RecordListOut:
@@ -82,17 +106,18 @@ async def recognize_record_background(record_id: int, user_id: int):
             record.duration_ms = int((time.time() - start) * 1000)
             record.status = "needs_review"
             record.progress_step = "done"
-            if record.result:
-                result = record.result
-            else:
-                result = OcrResult(record_id=record.id)
-                db.add(result)
-            result.raw_markdown = markdown
-            result.raw_ocr_json = raw_ocr
-            result.model_raw_json = model_raw
-            result.structured_json = json_dumps(structured)
-            result.raw_path = raw_path
+            save_result(record, structured, markdown, raw_ocr, model_raw, raw_path, db)
             log_action(db, user_id, "recognize_record", "record", record.id)
+        except PaddleOCRQueueFull as exc:
+            warning = "PaddleOCR 队列繁忙，已创建空白校对表，可手工补录后入库。"
+            structured = blank_structured_result(record.template, warning)
+            record.duration_ms = int((time.time() - start) * 1000)
+            record.status = "needs_review"
+            record.progress_step = "done"
+            record.error_message = ""
+            raw_ocr = json_dumps({"fallback": True, "reason": str(exc)})
+            save_result(record, structured, "", raw_ocr, raw_ocr, "", db)
+            log_action(db, user_id, "recognize_record_fallback", "record", record.id, str(exc))
         except Exception as exc:
             record.status = "failed"
             record.progress_step = "failed"

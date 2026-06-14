@@ -71,7 +71,7 @@ OCR Markdown：
         ],
         "temperature": 0.1,
     }
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
         resp = await client.post(
             settings.llm_base_url.rstrip("/") + "/v1/chat/completions",
             headers={"Authorization": f"Bearer {settings.llm_api_key}"},

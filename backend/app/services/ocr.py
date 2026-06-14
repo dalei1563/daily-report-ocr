@@ -8,6 +8,32 @@ import httpx
 from ..config import Settings
 
 
+class PaddleOCRQueueFull(RuntimeError):
+    pass
+
+
+def _response_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text[:500]
+    message = payload.get("msg") or payload.get("message") or payload.get("errorMsg")
+    if message:
+        return str(message)
+    return json.dumps(payload, ensure_ascii=False)[:500]
+
+
+def _is_queue_full(response: httpx.Response) -> bool:
+    if response.status_code != 400:
+        return False
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    message = str(payload.get("msg") or payload.get("message") or "")
+    return payload.get("code") == 10010 or "队列已满" in message
+
+
 async def run_paddle_ocr(settings: Settings, file_path: str, raw_dir: Path) -> tuple[str, str, str]:
     if not settings.paddle_ocr_token:
         raise RuntimeError("PADDLE_OCR_TOKEN is not configured")
@@ -18,11 +44,23 @@ async def run_paddle_ocr(settings: Settings, file_path: str, raw_dir: Path) -> t
         "useChartRecognition": False,
     }
     data = {"model": settings.paddle_ocr_model, "optionalPayload": json.dumps(optional_payload)}
-    async with httpx.AsyncClient(timeout=120) as client:
-        with open(file_path, "rb") as f:
-            files = {"file": (Path(file_path).name, f)}
-            job_resp = await client.post(settings.paddle_ocr_job_url, headers=headers, data=data, files=files)
-        job_resp.raise_for_status()
+    async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
+        submit_attempts = 3
+        for attempt in range(submit_attempts):
+            with open(file_path, "rb") as f:
+                files = {"file": (Path(file_path).name, f)}
+                job_resp = await client.post(settings.paddle_ocr_job_url, headers=headers, data=data, files=files)
+            if _is_queue_full(job_resp):
+                if attempt < submit_attempts - 1:
+                    await asyncio.sleep(5)
+                    continue
+                raise PaddleOCRQueueFull("PaddleOCR queue is full, please retry later")
+            try:
+                job_resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                message = _response_message(job_resp)
+                raise RuntimeError(f"PaddleOCR submit failed ({job_resp.status_code}): {message}") from exc
+            break
         job_id = job_resp.json()["data"]["jobId"]
 
         jsonl_url = ""

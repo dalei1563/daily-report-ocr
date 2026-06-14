@@ -1,4 +1,5 @@
 import os
+import asyncio
 from uuid import uuid4
 from pathlib import Path
 
@@ -8,6 +9,8 @@ os.environ["DATA_DIR"] = "./test_data"
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.routers.records import recognize_record_background
+from app.services.ocr import PaddleOCRQueueFull
 
 
 client = TestClient(app)
@@ -44,6 +47,32 @@ def test_upload_detail_and_export():
     export = client.post("/api/records/export", headers=headers)
     assert export.status_code == 200
     assert export.content
+
+
+def test_paddle_queue_full_falls_back_to_review(monkeypatch):
+    headers = auth_headers()
+    template_id = client.get("/api/templates", headers=headers).json()[0]["id"]
+    response = client.post(
+        "/api/records/upload",
+        headers=headers,
+        data={"template_id": str(template_id)},
+        files={"file": ("sample.jpg", b"fake-image", "image/jpeg")},
+    )
+    assert response.status_code == 200
+    record_id = response.json()["id"]
+
+    async def fake_run_paddle_ocr(*args, **kwargs):
+        raise PaddleOCRQueueFull("queue full")
+
+    monkeypatch.setattr("app.routers.records.run_paddle_ocr", fake_run_paddle_ocr)
+    asyncio.run(recognize_record_background(record_id, 1))
+
+    detail = client.get(f"/api/records/{record_id}", headers=headers)
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["status"] == "needs_review"
+    assert payload["result"]["rows"]
+    assert payload["warnings"]
 
 
 def test_non_admin_cannot_manage_templates():

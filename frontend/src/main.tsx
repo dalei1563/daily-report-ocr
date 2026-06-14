@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Alert,
@@ -19,6 +19,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
   Upload,
   message,
@@ -27,6 +28,7 @@ import {
 import {
   AppstoreOutlined,
   CalendarOutlined,
+  CameraOutlined,
   CheckCircleOutlined,
   CloseOutlined,
   CloudUploadOutlined,
@@ -110,14 +112,14 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function MetricTile({ icon, label, value, caption }: { icon: React.ReactNode; label: string; value: React.ReactNode; caption: string }) {
+function MetricTile({ icon, label, value, caption }: { icon: React.ReactNode; label: string; value: React.ReactNode; caption?: string }) {
   return (
     <div className="metric-tile">
       <div className="metric-icon">{icon}</div>
       <div>
         <div className="metric-label">{label}</div>
         <div className="metric-value">{value}</div>
-        <div className="metric-caption">{caption}</div>
+        {caption ? <div className="metric-caption">{caption}</div> : null}
       </div>
     </div>
   );
@@ -131,7 +133,7 @@ function PageIntro({
 }: {
   eyebrow: string;
   title: string;
-  description: string;
+  description?: string;
   action?: React.ReactNode;
 }) {
   return (
@@ -139,7 +141,7 @@ function PageIntro({
       <div>
         <div className="eyebrow">{eyebrow}</div>
         <Typography.Title level={1}>{title}</Typography.Title>
-        <Typography.Text>{description}</Typography.Text>
+        {description ? <Typography.Text>{description}</Typography.Text> : null}
       </div>
       {action ? <div className="page-intro-action">{action}</div> : null}
     </section>
@@ -175,30 +177,12 @@ function Login({ onDone }: { onDone: () => void }) {
       <section className="login-hero">
         <div className="login-copy">
           <BrandMark />
-          <Typography.Title level={1}>把手写日报表变成可管理的数据</Typography.Title>
-          <Typography.Text>
-            上传、识别、校对、入库和导出都在同一个工作台完成，适合本地部署的供应商日报表流程。
-          </Typography.Text>
-          <div className="login-preview" aria-hidden="true">
-            <div className="preview-toolbar">
-              <span />
-              <span />
-              <span />
-            </div>
-            <div className="preview-grid">
-              <div />
-              <div />
-              <div />
-              <div />
-              <div />
-              <div />
-            </div>
-          </div>
+          <Typography.Title level={1}>日报表 OCR</Typography.Title>
+          <Typography.Text>上传、识别、校对、导出。</Typography.Text>
         </div>
         <Card className="login-card">
           <div className="form-title">
-            <Typography.Title level={2}>登录工作台</Typography.Title>
-            <Typography.Text>使用管理员或日报录入账号继续</Typography.Text>
+            <Typography.Title level={2}>登录</Typography.Title>
           </div>
           <Form
             layout="vertical"
@@ -251,7 +235,7 @@ function BindTemplateModal({ open, templates, onBound }: { open: boolean; templa
   return (
     <Modal open={open} closable={false} maskClosable={false} title="绑定日报表模板" footer={null} width={480}>
       <Space direction="vertical" className="full" size="middle">
-        <Alert type="warning" showIcon message="所有用户必须绑定一种模板后才能使用 OCR 和数据管理。" />
+        <Alert type="warning" showIcon message="请先绑定模板。" />
         <Select
           size="large"
           value={value}
@@ -276,15 +260,10 @@ function ProgressOverlay({ open, completed, total, onCancel }: { open: boolean; 
         <div className="progress-spinner">
           <Spin size="large" />
         </div>
-        <Typography.Title level={3}>正在批量识别</Typography.Title>
-        <Typography.Text type="secondary">图片会先进行 OCR，再由 AI 抽取为结构化日报表数据。</Typography.Text>
+        <Typography.Title level={3}>识别中</Typography.Title>
         <div className="batch-progress">
           <div className="progress-number">{completed}/{total}</div>
           <Progress percent={percent} showInfo={false} strokeColor="#1e40af" trailColor="#dbeafe" />
-        </div>
-        <div className="progress-note">
-          <CheckCircleOutlined />
-          <span>单次最多上传 5 张，完成后统一进入校对区。</span>
         </div>
         <Button icon={<CloseOutlined />} block onClick={onCancel}>
           取消识别
@@ -308,6 +287,22 @@ function UploadPanel({
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [busy, setBusy] = useState(false);
   const [completed, setCompleted] = useState(0);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  function addCameraFiles(files: FileList | null) {
+    if (!files?.length) return;
+    const timestamp = Date.now();
+    const cameraFiles: UploadFile[] = Array.from(files).map((file, index) => ({
+      uid: `camera-${timestamp}-${index}`,
+      name: file.name || `拍照-${index + 1}.jpg`,
+      status: 'done',
+      originFileObj: file as UploadFile['originFileObj'],
+      type: file.type,
+      size: file.size,
+    }));
+    setFileList((current) => [...current, ...cameraFiles]);
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+  }
 
   async function start() {
     if (!fileList.length) return message.warning('请先上传报表图片');
@@ -370,7 +365,6 @@ function UploadPanel({
       <div className="card-heading">
         <div>
           <Typography.Title level={2}>上传日报表</Typography.Title>
-          <Typography.Text>支持图片和 PDF，单次最多 5 张。请尽量使用清晰、光线均匀的报表照片。</Typography.Text>
         </div>
         <Tag color="blue">模板：{boundTemplate.name}</Tag>
       </div>
@@ -384,43 +378,29 @@ function UploadPanel({
             beforeUpload={() => false}
             fileList={fileList}
             onChange={({ fileList: list }) => {
-              if (list.length > 5) message.warning('单次最多上传 5 张图片');
-              setFileList(list.slice(0, 5));
+              setFileList(list);
             }}
-            className="big-uploader"
+            className={`big-uploader ${fileList.length ? 'has-files' : 'is-empty'}`}
           >
             <div className="upload-plus">
               <CloudUploadOutlined />
-              <span>选择报表文件</span>
+              <span>{fileList.length ? '继续上传' : '选择报表文件'}</span>
               <small>图片 / PDF</small>
             </div>
           </Upload>
+          <input
+            ref={cameraInputRef}
+            className="camera-input"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            multiple
+            onChange={(event) => addCameraFiles(event.target.files)}
+          />
+          <Button className="camera-upload-button" icon={<CameraOutlined />} onClick={() => cameraInputRef.current?.click()} disabled={busy}>
+            拍照上传
+          </Button>
         </div>
-
-        <aside className="upload-aside">
-          <div className="pipeline-title">识别流程</div>
-          <div className="pipeline-step active">
-            <span>01</span>
-            <div>
-              <strong>上传原始报表</strong>
-              <p>保留文件并生成识别任务</p>
-            </div>
-          </div>
-          <div className="pipeline-step">
-            <span>02</span>
-            <div>
-              <strong>OCR + AI 结构化</strong>
-              <p>抽取表头与明细字段</p>
-            </div>
-          </div>
-          <div className="pipeline-step">
-            <span>03</span>
-            <div>
-              <strong>人工校对入库</strong>
-              <p>确认后进入数据管理</p>
-            </div>
-          </div>
-        </aside>
       </div>
 
       <div className="upload-actions">
@@ -439,8 +419,58 @@ function UploadPanel({
 function ReviewResult({ detail, index, total, onSubmitted }: { detail: RecordDetail; index?: number; total?: number; onSubmitted: () => void }) {
   const [data, setData] = useState<StructuredResult>(detail.result || { header: {}, rows: [], warnings: [] });
   const [saving, setSaving] = useState(false);
+  const [splitPercent, setSplitPercent] = useState(48);
+  const [isResizing, setIsResizing] = useState(false);
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [sourceError, setSourceError] = useState('');
+  const workbenchRef = useRef<HTMLDivElement>(null);
   const headerFields = detail.template.fields.filter((field) => field.area === 'header').sort((a, b) => a.sort_order - b.sort_order);
   const tableFields = detail.template.fields.filter((field) => field.area === 'table').sort((a, b) => a.sort_order - b.sort_order);
+  const isPdf = /\.pdf$/i.test(detail.original_filename);
+
+  useEffect(() => {
+    let objectUrl = '';
+    let alive = true;
+    setSourceUrl('');
+    setSourceError('');
+    api.get(detail.file_url.replace(/^\/api/, ''), { responseType: 'blob' })
+      .then((res) => {
+        if (!alive) return;
+        objectUrl = URL.createObjectURL(res.data as Blob);
+        setSourceUrl(objectUrl);
+      })
+      .catch(() => {
+        if (alive) setSourceError('原图加载失败');
+      });
+    return () => {
+      alive = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [detail.file_url]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    function move(event: PointerEvent) {
+      const rect = workbenchRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const next = ((event.clientX - rect.left) / rect.width) * 100;
+      setSplitPercent(Math.min(68, Math.max(32, next)));
+    }
+
+    function stop() {
+      setIsResizing(false);
+    }
+
+    document.body.classList.add('review-resizing');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    return () => {
+      document.body.classList.remove('review-resizing');
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+    };
+  }, [isResizing]);
 
   async function submit() {
     setSaving(true);
@@ -471,12 +501,22 @@ function ReviewResult({ detail, index, total, onSubmitted }: { detail: RecordDet
     setData((current) => ({ ...current, rows: current.rows.filter((_, i) => i !== rowIndex) }));
   }
 
+  function resizeWithKeyboard(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      setSplitPercent((current) => Math.max(32, current - 4));
+    }
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      setSplitPercent((current) => Math.min(68, current + 4));
+    }
+  }
+
   return (
     <Card className="work-card result-card">
       <div className="card-heading">
         <div>
           <Typography.Title level={2}>校对识别结果{total && total > 1 ? ` ${index}/${total}` : ''}</Typography.Title>
-          <Typography.Text>检查表头和明细，确认无误后提交入库。</Typography.Text>
         </div>
         <StatusTag status={detail.status} />
       </div>
@@ -485,71 +525,119 @@ function ReviewResult({ detail, index, total, onSubmitted }: { detail: RecordDet
         <Alert className="warning-alert" type="warning" showIcon message={data.warnings.join('；')} />
       ) : null}
 
-      <section className="header-form">
-        <div className="subsection-title">报表信息</div>
-        <div className="field-grid">
-          {headerFields.map((field) => (
-            <Form.Item key={field.code} label={<FieldLabel field={field} />}>
-              <Input
-                value={String(data.header[field.code] ?? '')}
-                onChange={(event: React.ChangeEvent<HTMLInputElement>) => updateHeader(field.code, event.target.value)}
-              />
-            </Form.Item>
-          ))}
-        </div>
-      </section>
+      <div
+        ref={workbenchRef}
+        className="review-workbench"
+        style={{ '--source-pane': `${splitPercent}%` } as React.CSSProperties}
+      >
+        <section className="source-pane">
+          <div className="pane-heading">
+            <span>原图</span>
+            <Button type="text" size="small" icon={<EyeOutlined />} href={sourceUrl || undefined} target="_blank" disabled={!sourceUrl} aria-label="打开原图" />
+          </div>
+          <div className="source-frame">
+            {sourceError ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={sourceError} />
+            ) : !sourceUrl ? (
+              <Spin />
+            ) : isPdf ? (
+              <iframe title={detail.original_filename} src={sourceUrl} />
+            ) : (
+              <img src={sourceUrl} alt={detail.original_filename} />
+            )}
+          </div>
+        </section>
 
-      <section className="review-table-section">
-        <div className="subsection-title">明细数据</div>
-        <div className="table-shell desktop-table">
-          <Table<Record<string, unknown>>
-            rowKey={(_, rowIndex) => String(rowIndex)}
-            dataSource={data.rows}
-            pagination={false}
-            scroll={{ x: 'max-content' }}
-            columns={[
-              ...tableFields.map((field) => ({
-                title: <FieldLabel field={field} />,
-                dataIndex: field.code,
-                width: 190,
-                render: (_: unknown, row: Record<string, unknown>, rowIndex: number) => (
-                  <Input
-                    value={String(row[field.code] ?? '')}
-                    onChange={(event: React.ChangeEvent<HTMLInputElement>) => updateRow(rowIndex, field.code, event.target.value)}
-                  />
-                ),
-              })),
-              {
-                title: '',
-                width: 72,
-                fixed: 'right' as const,
-                render: (_: unknown, __: Record<string, unknown>, rowIndex: number) => (
-                  <Button icon={<DeleteOutlined />} onClick={() => removeRow(rowIndex)} aria-label="删除行" />
-                ),
-              },
-            ]}
-          />
+        <div
+          className="split-handle"
+          role="separator"
+          tabIndex={0}
+          aria-label="调整原图和校对区宽度"
+          aria-orientation="vertical"
+          aria-valuemin={32}
+          aria-valuemax={68}
+          aria-valuenow={Math.round(splitPercent)}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            setIsResizing(true);
+          }}
+          onKeyDown={resizeWithKeyboard}
+        >
+          <span />
         </div>
 
-        <div className="mobile-row-list">
-          {data.rows.length ? data.rows.map((row, rowIndex) => (
-            <div className="mobile-row-card" key={String(rowIndex)}>
-              <div className="mobile-row-head">
-                <strong>明细 {rowIndex + 1}</strong>
-                <Button icon={<DeleteOutlined />} onClick={() => removeRow(rowIndex)} aria-label="删除行" />
-              </div>
-              {tableFields.map((field) => (
+        <div className="review-pane">
+          <section className="header-form compact-form">
+            <div className="subsection-title">报表信息</div>
+            <div className="field-grid">
+              {headerFields.map((field) => (
                 <Form.Item key={field.code} label={<FieldLabel field={field} />}>
                   <Input
-                    value={String(row[field.code] ?? '')}
-                    onChange={(event: React.ChangeEvent<HTMLInputElement>) => updateRow(rowIndex, field.code, event.target.value)}
+                    size="small"
+                    value={String(data.header[field.code] ?? '')}
+                    onChange={(event: React.ChangeEvent<HTMLInputElement>) => updateHeader(field.code, event.target.value)}
                   />
                 </Form.Item>
               ))}
             </div>
-          )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无明细行" />}
+          </section>
+
+          <section className="review-table-section">
+            <div className="subsection-title">明细数据</div>
+            <div className="table-shell desktop-table compact-table">
+              <Table<Record<string, unknown>>
+                size="small"
+                rowKey="_rowKey"
+                dataSource={data.rows.map((row, rowIndex) => ({ ...row, _rowKey: `${detail.id}-${rowIndex}` }))}
+                pagination={false}
+                scroll={{ x: 'max-content' }}
+                columns={[
+                  ...tableFields.map((field) => ({
+                    title: <FieldLabel field={field} />,
+                    dataIndex: field.code,
+                    width: 150,
+                    render: (_: unknown, row: Record<string, unknown>, rowIndex: number) => (
+                      <Input
+                        size="small"
+                        value={String(row[field.code] ?? '')}
+                        onChange={(event: React.ChangeEvent<HTMLInputElement>) => updateRow(rowIndex, field.code, event.target.value)}
+                      />
+                    ),
+                  })),
+                  {
+                    title: '',
+                    width: 46,
+                    fixed: 'right' as const,
+                    render: (_: unknown, __: Record<string, unknown>, rowIndex: number) => (
+                      <Button size="small" icon={<DeleteOutlined />} onClick={() => removeRow(rowIndex)} aria-label="删除行" />
+                    ),
+                  },
+                ]}
+              />
+            </div>
+
+            <div className="mobile-row-list">
+              {data.rows.length ? data.rows.map((row, rowIndex) => (
+                <div className="mobile-row-card" key={String(rowIndex)}>
+                  <div className="mobile-row-head">
+                    <strong>明细 {rowIndex + 1}</strong>
+                    <Button size="small" icon={<DeleteOutlined />} onClick={() => removeRow(rowIndex)} aria-label="删除行" />
+                  </div>
+                  {tableFields.map((field) => (
+                    <Form.Item key={field.code} label={<FieldLabel field={field} />}>
+                      <Input
+                        size="small"
+                        value={String(row[field.code] ?? '')}
+                        onChange={(event: React.ChangeEvent<HTMLInputElement>) => updateRow(rowIndex, field.code, event.target.value)}
+                      />
+                    </Form.Item>
+                  ))}
+                </div>
+              )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无明细行" />}
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
 
       <div className="submit-row">
         <Button icon={<PlusOutlined />} onClick={() => setData((current) => ({ ...current, rows: [...current.rows, {}] }))}>
@@ -583,15 +671,14 @@ function OcrPage({
   return (
     <main className="page">
       <PageIntro
-        eyebrow="OCR 工作台"
-        title="上传日报表，校对后直接入库"
-        description="面向本地部署的手写日报表识别流程，重点优化批量上传、结构化校对和数据归档。"
+        eyebrow="OCR"
+        title="日报表 OCR"
       />
 
       <div className="metrics-grid">
-        <MetricTile icon={<FileSearchOutlined />} label="当前模板" value={boundTemplate.name} caption={`${boundTemplate.fields.length} 个字段`} />
-        <MetricTile icon={<RobotOutlined />} label="识别队列" value={details.length ? `${details.length} 张` : '空闲'} caption="识别后在下方校对" />
-        <MetricTile icon={<CheckCircleOutlined />} label="提交方式" value="人工确认" caption="降低误入库风险" />
+        <MetricTile icon={<FileSearchOutlined />} label="模板" value={boundTemplate.name} />
+        <MetricTile icon={<RobotOutlined />} label="待校对" value={details.length ? `${details.length} 张` : '0'} />
+        <MetricTile icon={<CheckCircleOutlined />} label="入库" value="人工确认" />
       </div>
 
       <UploadPanel boundTemplate={boundTemplate} currentUser={currentUser} onOpenAdmin={onOpenAdmin} onRecognized={setDetails} />
@@ -611,7 +698,7 @@ function OcrPage({
   );
 }
 
-function RecordMobileCard({ record, onView }: { record: RecordList; onView: (id: number) => void }) {
+function RecordMobileCard({ record, onView, onDelete }: { record: RecordList; onView: (id: number) => void; onDelete: (record: RecordList) => void }) {
   return (
     <article className="record-mobile-card">
       <div>
@@ -619,9 +706,14 @@ function RecordMobileCard({ record, onView }: { record: RecordList; onView: (id:
         <span>{formatDateTime(record.created_at)}</span>
       </div>
       <StatusTag status={record.status} />
-      <Button icon={<EyeOutlined />} onClick={() => onView(record.id)}>
-        查看详情
-      </Button>
+      <div className="record-mobile-actions">
+        <Button icon={<EyeOutlined />} onClick={() => onView(record.id)}>
+          查看详情
+        </Button>
+        <Button danger icon={<DeleteOutlined />} onClick={() => onDelete(record)}>
+          删除
+        </Button>
+      </div>
     </article>
   );
 }
@@ -655,6 +747,21 @@ function DataManage({ refreshKey, onView }: { refreshKey: number; onView: (id: n
     URL.revokeObjectURL(url);
   }
 
+  function deleteRecord(record: RecordList) {
+    Modal.confirm({
+      title: '删除上传记录',
+      content: `确定删除「${record.original_filename || `记录 #${record.id}`}」吗？`,
+      okText: '删除',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      async onOk() {
+        await api.delete(`/records/${record.id}`);
+        message.success('已删除');
+        await load();
+      },
+    });
+  }
+
   const filteredRows = useMemo(() => {
     if (dateMode === 'all') return flat.rows;
     const days = dateMode === 'today' ? 1 : Number(dateMode);
@@ -669,15 +776,14 @@ function DataManage({ refreshKey, onView }: { refreshKey: number; onView: (id: n
     <main className="page">
       <PageIntro
         eyebrow="数据管理"
-        title="查看记录，筛选日报，导出 Excel"
-        description="集中管理已上传的报表记录和结构化明细，移动端也能快速查看状态。"
-        action={<Button type="primary" icon={<DownloadOutlined />} onClick={exportExcel}>导出全部数据</Button>}
+        title="数据管理"
+        action={<Button type="primary" icon={<DownloadOutlined />} onClick={exportExcel}>导出 Excel</Button>}
       />
 
       <div className="metrics-grid">
-        <MetricTile icon={<DatabaseOutlined />} label="上传记录" value={records.length} caption="全部批次" />
-        <MetricTile icon={<CheckCircleOutlined />} label="已入库" value={confirmedCount} caption="确认完成" />
-        <MetricTile icon={<RobotOutlined />} label="处理中" value={pendingCount} caption="识别或待校对" />
+        <MetricTile icon={<DatabaseOutlined />} label="记录" value={records.length} />
+        <MetricTile icon={<CheckCircleOutlined />} label="已入库" value={confirmedCount} />
+        <MetricTile icon={<RobotOutlined />} label="处理中" value={pendingCount} />
       </div>
 
       <Tabs
@@ -691,29 +797,43 @@ function DataManage({ refreshKey, onView }: { refreshKey: number; onView: (id: n
                 <div className="card-heading">
                   <div>
                     <Typography.Title level={2}>上传记录</Typography.Title>
-                    <Typography.Text>共 {records.length} 条记录</Typography.Text>
                   </div>
                   <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
                 </div>
                 <div className="table-shell desktop-table">
                   <Table<RecordList>
+                    className="records-table"
                     rowKey="id"
                     loading={loading}
                     dataSource={records}
-                    scroll={{ x: 760 }}
+                    scroll={{ x: 980 }}
                     columns={[
-                      { title: '报表日期', render: (_: unknown, row: RecordList) => <Space><CalendarOutlined />{formatDate(row.created_at)}</Space> },
-                      { title: '文件名', dataIndex: 'original_filename', ellipsis: true },
-                      { title: '模板', dataIndex: 'template_name' },
-                      { title: '录入人', dataIndex: 'username' },
-                      { title: '录入时间', dataIndex: 'created_at', render: (value: string) => formatDateTime(value) },
-                      { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag status={value} /> },
-                      { title: '操作', width: 120, fixed: 'right', render: (_: unknown, row: RecordList) => <Button type="link" icon={<EyeOutlined />} onClick={() => onView(row.id)}>查看</Button> },
+                      { title: '报表日期', width: 130, render: (_: unknown, row: RecordList) => <Space><CalendarOutlined />{formatDate(row.created_at)}</Space> },
+                      { title: '文件名', dataIndex: 'original_filename', ellipsis: true, width: 220 },
+                      { title: '模板', dataIndex: 'template_name', width: 150 },
+                      { title: '录入人', dataIndex: 'username', width: 130 },
+                      { title: '录入时间', dataIndex: 'created_at', width: 190, render: (value: string) => formatDateTime(value) },
+                      { title: '状态', dataIndex: 'status', width: 120, render: (value: string) => <StatusTag status={value} /> },
+                      {
+                        title: '操作',
+                        width: 96,
+                        align: 'center' as const,
+                        render: (_: unknown, row: RecordList) => (
+                          <Space className="record-actions" size={6}>
+                            <Tooltip title="查看">
+                              <Button size="small" icon={<EyeOutlined />} onClick={() => onView(row.id)} aria-label="查看" />
+                            </Tooltip>
+                            <Tooltip title="删除">
+                              <Button size="small" danger icon={<DeleteOutlined />} onClick={() => deleteRecord(row)} aria-label="删除" />
+                            </Tooltip>
+                          </Space>
+                        ),
+                      },
                     ]}
                   />
                 </div>
                 <div className="record-mobile-list">
-                  {records.length ? records.map((record) => <RecordMobileCard key={record.id} record={record} onView={onView} />) : (
+                  {records.length ? records.map((record) => <RecordMobileCard key={record.id} record={record} onView={onView} onDelete={deleteRecord} />) : (
                     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无上传记录" />
                   )}
                 </div>
@@ -728,8 +848,7 @@ function DataManage({ refreshKey, onView }: { refreshKey: number; onView: (id: n
                 <Card className="work-card date-filter">
                   <div className="filter-row">
                     <div>
-                      <Typography.Title level={2}>日期筛选</Typography.Title>
-                      <Typography.Text>当前显示 {filteredRows.length} 条结构化明细</Typography.Text>
+                      <Typography.Title level={2}>日期</Typography.Title>
                     </div>
                     <div className="filter-buttons">
                       {datePresets.map(([key, label]) => (
@@ -744,7 +863,6 @@ function DataManage({ refreshKey, onView }: { refreshKey: number; onView: (id: n
                   <div className="card-heading">
                     <div>
                       <Typography.Title level={2}>报表明细</Typography.Title>
-                      <Typography.Text>宽表格在手机端可横向滑动查看</Typography.Text>
                     </div>
                   </div>
                   <div className="table-shell">
@@ -831,14 +949,12 @@ function Templates({ templates, reload }: { templates: Template[]; reload: () =>
       <div className="admin-section-head">
         <div>
           <Typography.Title level={3}>模板配置</Typography.Title>
-          <Typography.Text>定义表头和明细字段，用户绑定模板后即可识别。</Typography.Text>
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => start()}>新建模板</Button>
       </div>
       <div className="table-shell">
-        <Table<Template> className="admin-table" rowKey="id" dataSource={templates} scroll={{ x: 640 }} columns={[
+        <Table<Template> className="admin-table" rowKey="id" dataSource={templates} scroll={{ x: 520 }} columns={[
           { title: '模板名称', dataIndex: 'name' },
-          { title: '描述', dataIndex: 'description', ellipsis: true },
           { title: '字段数', render: (_: unknown, row: Template) => row.fields.length },
           { title: '默认', dataIndex: 'is_default', render: (value: boolean) => value ? <Tag color="green">默认</Tag> : '-' },
           { title: '操作', width: 120, render: (_: unknown, row: Template) => <Button icon={<SettingOutlined />} onClick={() => start(row)}>配置</Button> },
@@ -850,7 +966,6 @@ function Templates({ templates, reload }: { templates: Template[]; reload: () =>
             <Form.Item name="name" label="模板名称" rules={[{ required: true, message: '请输入模板名称' }]}><Input /></Form.Item>
             <Form.Item name="is_default" label="默认模板"><Select options={[{ label: '否', value: false }, { label: '是', value: true }]} /></Form.Item>
           </div>
-          <Form.Item name="description" label="描述"><Input /></Form.Item>
           <Form.List name="fields">
             {(fields, { add, remove, move }) => (
               <Space direction="vertical" className="full">
@@ -971,7 +1086,6 @@ function Users({ templates, currentUser }: { templates: Template[]; currentUser:
       <div className="admin-section-head">
         <div>
           <Typography.Title level={3}>账号管理</Typography.Title>
-          <Typography.Text>创建账号、调整角色与模板，并完成启停、重置密码和删除。</Typography.Text>
         </div>
       </div>
       <Form form={form} layout="inline" onFinish={create} className="user-form">
@@ -1152,7 +1266,6 @@ function Settings() {
       <div className="admin-section-head">
         <div>
           <Typography.Title level={3}>模型配置</Typography.Title>
-          <Typography.Text>配置 OCR 与大模型服务，密钥仅显示掩码。</Typography.Text>
         </div>
       </div>
       <Form form={form} layout="vertical" onFinish={save} className="settings-form">
@@ -1208,7 +1321,7 @@ function RecordViewModal({ id, onClose, onStored }: { id?: number; onClose: () =
   }, [id]);
 
   return (
-    <Modal open={Boolean(id)} onCancel={onClose} footer={null} width={980} title="报表详情" className="record-modal">
+    <Modal open={Boolean(id)} onCancel={onClose} footer={null} width="min(1600px, calc(100vw - 48px))" title="报表详情" className="record-modal">
       {detail ? <ReviewResult detail={detail} onSubmitted={() => { onClose(); onStored(); }} /> : <div className="modal-loading"><Spin /></div>}
     </Modal>
   );
